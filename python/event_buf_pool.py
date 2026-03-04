@@ -1,17 +1,16 @@
 from typing import List
 from dataclasses import dataclass, field
-from metavision_sdk_core import PolarityFilterAlgorithm
-from metavision_sdk_base import EventCDBuffer
+import numpy as np
+
+from bias_events_iterator import EVENT_DTYPE
 
 
 @dataclass
 class EventBufPool:
-    bufs: List[EventCDBuffer] = field(default_factory=list)
+    """Simple pool for numpy event arrays. No longer requires Metavision SDK."""
 
     def get_buf(self):
-        if not self.bufs:
-            return PolarityFilterAlgorithm.get_empty_output_buffer()
-        return self.bufs.pop()
+        return np.empty(0, dtype=EVENT_DTYPE)
 
     def return_buf(self, buf):
-        self.bufs.append(buf)
+        pass

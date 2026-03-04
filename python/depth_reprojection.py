@@ -1,25 +1,21 @@
-from metavision_sdk_ui import EventLoop
-
-from bias_events_iterator import NonBufferedBiasEventsIterator
+from bias_events_iterator import DvEventsIterator
 from depth_reprojection_processor import DepthReprojectionProcessor, RuntimeParams
 
 import click
 import sys
 
 
-def project_events(bias, input, params, delta_t, ev_processor):
-    mv_iterator = NonBufferedBiasEventsIterator(input_filename=input, delta_t=delta_t, bias_file=bias)
-    # mv_iterator = BiasEventsIterator(input_filename=cli_params["input"], delta_t=8000, bias_file=cli_params["bias"])
-    cam_height_reader, cam_width_reader = mv_iterator.get_size()  # Camera Geometry
+def project_events(input, params, delta_t, ev_processor, threshold_on, threshold_off):
+    ev_iterator = DvEventsIterator(
+        input_filename=input, threshold_on=threshold_on, threshold_off=threshold_off
+    )
+    cam_height_reader, cam_width_reader = ev_iterator.get_size()  # Camera Geometry
 
     assert cam_height_reader == params.camera_height
     assert cam_width_reader == params.camera_width
 
-    for evs in mv_iterator:
+    for evs in ev_iterator:
         with ev_processor.stats_printer.measure_time("main loop"):
-            # Dispatch system events to the window
-            EventLoop.poll_and_dispatch()
-
             if not len(evs):
                 continue
 
@@ -46,9 +42,22 @@ def project_events(bias, input, params, delta_t, ev_processor):
     type=click.Path(),
     required=True,
 )
-@click.option("--bias", help="Path to bias file, only required for live camera", type=click.Path())
 @click.option(
-    "--input", help="Either a .raw, .dat file for prerecordings. Don't specify for live capture.", type=click.Path()
+    "--threshold-on",
+    default=None,
+    help="Contrast threshold for ON events (1-17). Only used for live cameras.",
+    type=int,
+)
+@click.option(
+    "--threshold-off",
+    default=None,
+    help="Contrast threshold for OFF events (1-17). Only used for live cameras.",
+    type=int,
+)
+@click.option(
+    "--input",
+    help="Path to an .aedat4 file for prerecordings. Don't specify for live capture.",
+    type=click.Path(),
 )
 @click.option("--loop-input", help="Loop input file", is_flag=True)
 @click.option(
@@ -56,10 +65,10 @@ def project_events(bias, input, params, delta_t, ev_processor):
 )
 @click.option(
     "--camera-perspective",
-    help="By default the depth is rendered from the projector's perspectiev. Enable this flag to render from the camera perspective instead.",
+    help="By default the depth is rendered from the projector's perspective. Enable this flag to render from the camera perspective instead.",
     is_flag=True,
 )
-def main(bias, input, loop_input, **cli_params):
+def main(input, loop_input, threshold_on, threshold_off, **cli_params):
     # TODO remove these static values, retrieve from event stream
     params = RuntimeParams(camera_width=640, camera_height=480, **cli_params)
 
@@ -71,7 +80,7 @@ def main(bias, input, loop_input, **cli_params):
 
     with DepthReprojectionProcessor(params) as ev_processor:
         while True:
-            project_events(bias, input, params, delta_t, ev_processor)
+            project_events(input, params, delta_t, ev_processor, threshold_on, threshold_off)
             if loop_input:
                 ev_processor.reset()
             else:

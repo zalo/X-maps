@@ -3,7 +3,7 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  - python=3.8
+  - python>=3.9
   - black
   - click
   - fire
@@ -18,7 +18,7 @@ dependencies:
   - opencv
   # - opend3d
   - pandas
-  # - pip
+  - pip
   - pylops==1.18.3
   - py-spy
   - pyntcloud
@@ -27,4 +27,6 @@ dependencies:
   - scipy
   - seaborn
   - tk
+  - pip:
+    - dv-processing
 

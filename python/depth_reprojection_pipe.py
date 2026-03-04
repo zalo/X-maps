@@ -1,8 +1,9 @@
 from typing import Any, Callable
+from datetime import timedelta
 
-from metavision_sdk_core import PolarityFilterAlgorithm
-from metavision_sdk_cv import ActivityNoiseFilterAlgorithm
+import dv_processing as dv
 
+from bias_events_iterator import eventstore_to_numpy
 from trigger_finder import RobustTriggerFinder
 from stats_printer import StatsPrinter, SingleTimer
 from cam_proj_calibration import CamProjMaps, CamProjCalibrationParams
@@ -10,7 +11,6 @@ from x_maps_disparity import XMapsDisparity
 from proj_time_map import ProjectorTimeMap
 from disp_to_depth import DisparityToDepth
 from timing_watchdog import TimingWatchdog
-from event_buf_pool import EventBufPool
 from frame_event_filter import FrameEventFilterProcessor
 
 from dataclasses import dataclass, field
@@ -40,13 +40,8 @@ class DepthReprojectionPipe:
     stats_printer: StatsPrinter
     frame_callback: Callable
 
-    pos_filter = PolarityFilterAlgorithm(1)
-
-    # TODO revisit: does this have an effect on latency?
-    act_filter: ActivityNoiseFilterAlgorithm = field(init=False)
-
-    pos_events_buf = PolarityFilterAlgorithm.get_empty_output_buffer()
-    # act_events_buf = None
+    pos_filter: dv.EventPolarityFilter = field(init=False)
+    act_filter: Any = field(init=False)
 
     calib_maps: CamProjMaps = field(init=False)
 
@@ -59,11 +54,15 @@ class DepthReprojectionPipe:
 
     watchdog: TimingWatchdog = field(init=False)
 
-    pool = EventBufPool()
-
     def __post_init__(self):
-        self.act_filter = ActivityNoiseFilterAlgorithm(
-            self.params.camera_width, self.params.camera_height, int(1e6 / self.params.projector_fps)
+        # Polarity filter: keep positive polarity events only
+        self.pos_filter = dv.EventPolarityFilter(True)
+
+        # Activity noise filter: remove events without recent neighborhood support
+        resolution = (self.params.camera_width, self.params.camera_height)
+        self.act_filter = dv.noise.BackgroundActivityNoiseFilter(
+            resolution,
+            backgroundActivityDuration=timedelta(microseconds=int(1e6 / self.params.projector_fps)),
         )
 
         with SingleTimer("Setting up calibration"):
@@ -101,27 +100,34 @@ class DepthReprojectionPipe:
         self.trigger_finder = RobustTriggerFinder(
             projector_fps=self.params.projector_fps,
             stats=self.stats_printer,
-            pool=self.pool,
             frame_callback=self.process_ev_frame,
         )
 
         self.watchdog = TimingWatchdog(stats_printer=self.stats_printer, projector_fps=self.params.projector_fps)
 
     def process_events(self, evs):
+        """Process a batch of events. Accepts dv.EventStore objects."""
         if self.watchdog.is_processing_behind(evs) and self.params.should_drop_frames:
             self.trigger_finder.drop_frame()
 
-        self.pos_filter.process_events(evs, self.pos_events_buf)
+        # Apply polarity filter (keep positive polarity)
+        self.pos_filter.accept(evs)
+        pos_events = self.pos_filter.generateEvents()
 
-        act_out_buf = self.pool.get_buf()
-        self.act_filter.process_events(self.pos_events_buf, act_out_buf)
+        # Apply activity noise filter
+        self.act_filter.accept(pos_events)
+        filtered_events = self.act_filter.generateEvents()
 
-        self.trigger_finder.process_events(act_out_buf)
+        if len(filtered_events) == 0:
+            return
+
+        # Convert to numpy structured array for the rest of the pipeline
+        np_events = eventstore_to_numpy(filtered_events)
+
+        self.trigger_finder.process_events(np_events)
 
     def process_ev_frame(self, evs):
         """Callback from the trigger finder, evs contain the events of the current frame"""
-        # generate_frame(evs, frame)
-        # window.show_async(frame)
 
         with self.stats_printer.measure_time("ev rect"):
             # get rectified event coordinates

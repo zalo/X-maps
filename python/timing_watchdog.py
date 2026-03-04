@@ -4,7 +4,10 @@ import time
 
 @dataclass
 class TimingWatchdog:
-    """Compare total CPU processing time to the elapsed event time since first processed event."""
+    """Compare total CPU processing time to the elapsed event time since first processed event.
+
+    Accepts dv.EventStore objects (uses getLowestTime()) or numpy arrays (uses ["t"][0]).
+    """
 
     # TODO may behave incorrectly when event time wraps around
 
@@ -14,14 +17,22 @@ class TimingWatchdog:
 
     _first_event_time_us: int = -1
 
+    def _get_first_time(self, evs):
+        """Get the first event timestamp from either a dv.EventStore or numpy array."""
+        if hasattr(evs, "getLowestTime"):
+            return evs.getLowestTime()
+        return evs["t"][0]
+
     def is_processing_behind(self, evs) -> bool:
+        first_time = self._get_first_time(evs)
+
         if self._first_event_time_us == -1:
-            self._first_event_time_us = evs["t"][0]
+            self._first_event_time_us = first_time
             # first events are arriving now, so let's start the global timers
             self.stats_printer.reset()
             return False
 
-        total_ev_time_ns = (evs["t"][0] - self._first_event_time_us) * 1000
+        total_ev_time_ns = (first_time - self._first_event_time_us) * 1000
         total_processing_t_ns = time.perf_counter_ns() - self.stats_printer.start_time_ns()
         processing_lags_behind_ns = total_processing_t_ns - total_ev_time_ns
 

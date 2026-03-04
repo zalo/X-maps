@@ -8,14 +8,9 @@ USER root
 ENV TZ=Europe/Berlin
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
-# ./metavision.list is not included in the repository, you need to manually create .devcontainer/metavision.list from metavision.list.template
-COPY ./metavision.list /tmp/metavision.list
-# check on a temporary copy, because we don't have ca-certificates yet, and apt-get update would fail
-RUN grep -q '^[^#]' /tmp/metavision.list || (echo "ERROR: metavision.list is empty. Add Metavision SDK repository URL to .devcontainer/metavision.list!" && exit 1)
-
 USER root
 
-# intalling basic tools
+# installing basic tools
 RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get upgrade -y && \
     DEBIAN_FRONTEND=noninteractive apt autoremove -y && \
@@ -31,17 +26,14 @@ RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
     unzip \
     wget
 
-# installing MetavisionSDK
-COPY ./metavision.list /etc/apt/sources.list.d/metavision.list
-
-RUN DEBIAN_FRONTEND=noninteractive apt-get update && \
+# Install dv-processing dependencies
+# For live camera support, install iniVation's dv-runtime package
+# See: https://inivation.gitlab.io/dv/dv-docs/docs/getting-started/
+RUN wget -O - https://docs.inivation.com/apt.key | apt-key add - && \
+    echo "deb [arch=amd64] https://docs.inivation.com/apt focal release" > /etc/apt/sources.list.d/inivation.list && \
+    DEBIAN_FRONTEND=noninteractive apt-get update && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    metavision-hal-bin \
-    metavision-hal-prophesee-plugins \
-    metavision-sdk-core-bin \
-    metavision-sdk-core-python \
-    metavision-sdk-core-python3.8 \
-    metavision-sdk-python3.8
+    dv-runtime || echo "Note: dv-runtime not available on this platform, live camera support may not work."
 
 RUN export LC_ALL=en_US.UTF-8
 RUN export LANG=en_US.UTF-8

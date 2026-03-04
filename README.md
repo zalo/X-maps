@@ -29,7 +29,34 @@
 
 This project enables you to utilize event cameras to carry out live depth estimations from images projected with a laser projector. We've streamlined the depth estimation process by creating a lookup image with one spatial and one temporal axis (`y` and `t`), forming an X-map. This idea enables speedy depth calculations (taking less than 3 ms per frame), but also maintains the accuracy of depth estimation through disparity search in time maps. The end result is an efficient, reactive tool for designing real-time Spatial Augmented Reality experiences.
 
-The entry point for the live depth estimation is `python/depth_reprojection.py`. The script is using the Metavision SDK to facilitate event data capture from Prophesee cameras. For a straightforward environment setup, an `Ubuntu 20.04` Dockerfile is provided. The depth estimation is implemented in Python with NumPy and Numba.
+The entry point for the live depth estimation is `python/depth_reprojection.py`. The depth estimation is implemented in Python with NumPy and Numba.
+
+## dv-processing Fork
+
+> **This fork replaces the [Metavision SDK](https://docs.prophesee.ai/stable/metavision_sdk/) (Prophesee) with [dv-processing](https://dv-processing.inivation.com/) (iniVation) for event camera I/O and processing.**
+
+### What changed
+
+- **Camera I/O**: Uses `dv.io.camera.open()` for live iniVation cameras (DAVIS, DVXplorer) and `dv.io.MonoCameraRecording()` for recorded `.aedat4` files. Replaces `metavision_hal` device discovery and `EventsIterator`.
+- **Event filtering**: `PolarityFilterAlgorithm` → `dv.EventPolarityFilter`, `ActivityNoiseFilterAlgorithm` → `dv.noise.BackgroundActivityNoiseFilter`.
+- **Visualization window**: Metavision `MTWindow` / `EventLoop` UI replaced with OpenCV `cv2.namedWindow` / `cv2.imshow` / `cv2.waitKey`.
+- **Camera configuration**: Prophesee per-bias settings replaced with iniVation contrast thresholds (`--threshold-on`, `--threshold-off`).
+- **Recording format**: Input files are now `.aedat4` instead of `.raw` / `.dat`.
+- **Docker**: Metavision SDK apt packages replaced with iniVation `dv-runtime` + `dv-processing` pip package.
+
+### Updated CLI
+
+```sh
+# Live camera with contrast thresholds:
+python3 python/depth_reprojection.py --calib data/calibration.yaml --threshold-on 17 --threshold-off 17
+
+# Recorded .aedat4 file:
+python3 python/depth_reprojection.py --calib data/calibration.yaml --input recording.aedat4
+```
+
+### What stayed the same
+
+The entire depth estimation pipeline (calibration, rectification, X-map disparity lookup, depth coloring, trigger finding, frame event filtering, evaluation scripts) is unchanged. A conversion layer maps dv-processing event fields (`timestamp`, `polarity`) to the numpy field names (`t`, `p`) expected by the pipeline.
 
 <!-- ABOUT THE PROJECT -->
 <!-- ## About The Project
@@ -58,13 +85,11 @@ The project is configured to run from a Docker image in Visual Studio Code (VS C
 
 1. Clone the repo
    ```sh
-   git clone git@github.com:fraunhoferhhi/X-maps.git
+   git clone git@github.com:zalo/X-maps.git
    ```
 2. Open X-maps folder in VS Code
 3. Install the extensions recommended by VS Code (_Docker_ and _Dev Containers_)
-4. Copy `.devcontainer/metavision.list.template` to `.devcontainer/metavision.list`
-5. Edit `.devcontainer/metavision.list` to fill in the URL to the Ubuntu 20.04 Metavision SDK
-6. _Reopen in Container_ in VS Code
+4. _Reopen in Container_ in VS Code (dv-processing is installed automatically)
 
 <!-- <p align="right">(<a href="#readme-top">back to top</a>)</p> -->
 
@@ -89,7 +114,7 @@ Run the target _X-maps ESL static seq1_. A window should open that performs a li
 
 ### Live depth reprojection (Spatial Augmented Reality example)
 
-1. Ensure that the camera is working correctly by running `metavision_player` in a Terminal in VS Code.
+1. Ensure that the camera is working correctly (e.g. using iniVation's DV software or a test script).
 2. Calibrate your camera-projector setup, and write the parameters into a YAML file, storing the OpenCV matrices. Examples can be found in `data/`.
 3. Choose camera biases in a way to produce mostly positive events (negative are ignored in processing) and produce few events outside the projected area.
 4. Edit the command line arguments for target _X-maps live depth reprojection_ in `.vscode/launch.json`.
@@ -110,10 +135,11 @@ The parameters you can use when running the `depth_reprojection.py` script can b
 | `--z-near`             | Sets the minimum depth in meters (m) for visualization. The default value is `0.1`.                                                            |
 | `--z-far`              | Sets the maximum depth in meters (m) for visualization. The default value is `1.0`.                                                            |
 | `--calib`              | Specifies the path to a yaml file with camera and projector intrinsic and extrinsic calibration. This parameter is required.                   |
-| `--bias`               | Specifies the path to the bias file. This is only required for live camera usage.                                                              |
-| `--input`              | Specifies the path to either a .raw, .dat file for prerecorded sessions. Leave this parameter out for live capture.                            |
+| `--threshold-on`       | Contrast threshold for ON events (1-17). Only used for live cameras.                                                                           |
+| `--threshold-off`      | Contrast threshold for OFF events (1-17). Only used for live cameras.                                                                          |
+| `--input`              | Specifies the path to an `.aedat4` file for prerecorded sessions. Leave this parameter out for live capture.                                   |
 | `--no-frame-dropping`  | By default, events are dropped when the processing is too slow. Use this parameter to disable frame dropping, and process all incoming events. |
-| `--loop-input`         | After events from RAW input file are exhausted, start playing from beginning again, forever.                                                   |
+| `--loop-input`         | After events from input file are exhausted, start playing from beginning again, forever.                                                       |
 | `--camera-perspective` | By default the depth is rendered from the projector's perspectiev. Enable this flag to render from the camera perspective instead.             |
 
 ### Compute evaluation on static ESL data
@@ -146,7 +172,7 @@ The X-Maps column lists the default for the depth reprojection script. The ESL c
 
 ### Depth reprojection steps
 
-Here we describe the steps that are performed by the depth reprojection script. It starts with the raw events coming from the camera. By default, the SDK is queried to get 4 packets of events per projector frame.
+Here we describe the steps that are performed by the depth reprojection script. It starts with the raw events coming from the camera.
 
 #### Frame dropping
 
@@ -232,6 +258,7 @@ Wieland Morgenstern: [LinkedIn](https://www.linkedin.com/in/wiemo/) · [Fraunhof
 ## Acknowledgments
 
 - [ESL: Event-based Structured Light](https://github.com/uzh-rpg/ESL)
-- [Metavision SDK](https://docs.prophesee.ai/stable/metavision_sdk/)
+- [dv-processing](https://dv-processing.inivation.com/)
+- [Metavision SDK](https://docs.prophesee.ai/stable/metavision_sdk/) (original version)
 - [Event-based Vision Resources](https://github.com/uzh-rpg/event-based_vision_resources)
 - [CVPR 2023 Workshop on Event-based Vision](https://tub-rip.github.io/eventvision2023/)
